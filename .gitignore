@@ -3,6 +3,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# OSM cahces
+cache/
+
+# Locally cached data
+data/
+
 # C extensions
 *.so
 

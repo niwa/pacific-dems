@@ -1,0 +1,16 @@
+# YML file for setting up a virtual environment including packages used for processing point clouds, GIS and raster to produce raster using spyder.
+
+name: partner_elevation
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - pip
+  - geopandas >=0.10.2
+  - rioxarray
+  - ipykernel
+  - pip:
+    - osmpythontools >=0.3.5
+    - netcdf4
+
+prefix: C:\ProgramData\Anaconda3\envs\partner_elevation
