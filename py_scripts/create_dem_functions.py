@@ -22,8 +22,8 @@ FABDEM_NODATA = 0
 def load_dem(dem_path: pathlib):
     """ Load in a DEM - ensure values are float32. """
     dem = rioxarray.open_rasterio(dem_path, masked=True, chunks=True).squeeze("band", drop=True)
-    dem.rio.set_nodata(numpy.nan, inplace=True)
-    dem.rio.write_nodata(dem.rio.nodata, inplace=True)
+    dem = dem.rio.set_nodata(numpy.nan)
+    dem = dem.rio.write_nodata(dem.rio.nodata)
     dem['x'] = dem.x.astype(numpy.float32)
     dem['y'] = dem.y.astype(numpy.float32)
     dem = dem.astype(numpy.float32)
@@ -327,13 +327,6 @@ def loop_through_islands_creating_dems(
 
         # Trim LiDAR DEM - if it exists
         if "lidar" in island_values.keys():
-            island_values["lidar"].to_netcdf(r"C:\Local\repos\pacific-dems\data\tonga\5m_dems\test_lidar.nc")
-            clipping_boundary.to_file(r"C:\Local\repos\pacific-dems\data\tonga\5m_dems\test_clipped_boundary.geojson")
-            clipping_boundary.buffer(max(island_values["fab"].rio.resolution())).to_file(r"C:\Local\repos\pacific-dems\data\tonga\5m_dems\test_clipped_boundary_fab.geojson")
-            clipping_boundary.buffer(resolution).to_file(r"C:\Local\repos\pacific-dems\data\tonga\5m_dems\test_clipped_boundary_lidar.geojson")
-            islands.to_file(r"C:\Local\repos\pacific-dems\data\tonga\5m_dems\test_islands.geojson")
-            print(island_values["lidar"])
-            print(clipping_boundary.buffer(resolution).geometry)
             trimmed_lidar = island_values["lidar"].rio.clip(
                 clipping_boundary.buffer(resolution).geometry,
                 drop=True, all_touched=True
