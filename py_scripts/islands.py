@@ -259,7 +259,7 @@ def tonga() -> dict:
                         "lons": [-175.12, -174.21, -174.21, -175.12]}
 
     tonga["vava'u_group"] = {"crs": crs_zone1S,
-                        "lats": [-18.01, -18.01, -19.18, -19.18],
+                        "lats": [-18.01, -18.01, -18.99, -18.99],
                         "lons": [-174.86, -173.89, -173.89, -174.86]}
 
     tonga["niuatoputapu_tafahi_islands"] = {"crs": crs_zone1S,

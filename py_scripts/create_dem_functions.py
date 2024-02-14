@@ -1,22 +1,33 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed Sep 14 14:50:20 2022
+Created on Wed Sep 14 14:50:20 2022F
 
 @author: pearsonra
 """
 
 import numpy
+import xarray
 import rioxarray
 import rioxarray.merge
 import geopandas
 import shapely
 import pathlib
+import shutil
 import OSMPythonTools.overpass
 import pandas
 
 OSM_CRS = "EPSG:4326"
 FABDEM_NODATA = 0
 
+def load_dem(dem_path: pathlib):
+    """ Load in a DEM - ensure values are float32. """
+    dem = rioxarray.open_rasterio(dem_path, masked=True, chunks=True).squeeze("band", drop=True)
+    dem.rio.set_nodata(numpy.nan, inplace=True)
+    dem.rio.write_nodata(dem.rio.nodata, inplace=True)
+    dem['x'] = dem.x.astype(numpy.float32)
+    dem['y'] = dem.y.astype(numpy.float32)
+    dem = dem.astype(numpy.float32)
+    return dem
 
 def resample_dem(dem_in: rioxarray, resolution: float, boundary: geopandas):
     """ A function to downscale a LiDAR DEM and combine with a FABDEM where there is no
@@ -174,7 +185,7 @@ def get_osm_islands_in_boundary(boundary_crs4326: geopandas, local_crs: str):
     return islands
 
 
-def construct_fab_folder_name(lat: int, lon: int):
+def construct_fab_folder_name(lat: int, lon: int, fab_version: str):
     "Constuct the FABDEM folder name from the lat and lon coordinates."
 
     if lon <= 0:
@@ -208,13 +219,13 @@ def construct_fab_folder_name(lat: int, lon: int):
             f"S{abs(int(numpy.ceil((lat + 0.5) / 10.0)) * 10):02d}",
         ]
     folder_name = (
-        f"{north_south[0]}{east_west[0]}-" f"{north_south[1]}{east_west[1]}_FABDEM_V1-0"
+        f"{north_south[0]}{east_west[0]}-" f"{north_south[1]}{east_west[1]}_FABDEM_{fab_version}"
     )
 
     return folder_name
 
 
-def construct_fab_name(lat: int, lon: int):
+def construct_fab_name(lat: int, lon: int, fab_version: str):
     "Constuct the FABDEM folder name from the lat and lon coordinates."
 
     if lon <= 0:
@@ -225,13 +236,13 @@ def construct_fab_name(lat: int, lon: int):
         north_south = "N"
     else:
         north_south = "S"
-    name = f"{north_south}{abs(lat):02d}" f"{east_west}{abs(lon):02d}_FABDEM_V1-0.tif"
+    name = f"{north_south}{abs(lat):02d}" f"{east_west}{abs(lon):02d}_FABDEM_{fab_version}.tif"
 
     return name
 
 
 def combine_fabs_in_boundary(
-    island_dict: dict, fab_path: pathlib,
+    island_dict: dict, fab_path: pathlib, fab_version: str = "V1-2"
 ):
     """ Combine all FAB lat and lon tiles into a single DEM. """
 
@@ -246,13 +257,18 @@ def combine_fabs_in_boundary(
     fabs = []
     for lat in lats:
         for lon in lons:
-            fab_folder_name = construct_fab_folder_name(lat=lat, lon=lon)
-            fab_name = construct_fab_name(lat=lat, lon=lon)
-            if (fab_path / fab_folder_name / fab_name).exists():
+            fab_folder_name = construct_fab_folder_name(lat=lat, lon=lon, fab_version=fab_version)
+            fab_name = construct_fab_name(lat=lat, lon=lon, fab_version=fab_version)
+            if (fab_path / fab_version / fab_folder_name / fab_name).exists():
                 fabs.append(
-                    rioxarray.open_rasterio(
-                        fab_path / fab_folder_name / fab_name, masked=True,
-                    )
+                    load_dem(fab_path / fab_version / fab_folder_name / fab_name)
+                )
+            elif (fab_path / fab_version / f"{fab_folder_name}.zip").exists(): 
+                # Not yet unzipped
+                shutil.unpack_archive(str(fab_path / fab_version / f"{fab_folder_name}.zip"),
+                                      str(fab_path / fab_version / fab_folder_name), 'zip')
+                fabs.append(
+                    load_dem(fab_path / fab_version / fab_folder_name / fab_name)
                 )
             else:
                 print(f"No {fab_folder_name}/{fab_name} FABDEM exists")
@@ -299,7 +315,7 @@ def loop_through_islands_creating_dems(
         # Add a buffer (i.e. 75m say) around each island before clipping
         clipping_boundary = islands.buffer(resolution * 15) if buffer else islands
 
-        # Trim FAB then interpolate
+        # Trim FAB then resample
         trimmed_fab = island_values["fab"].rio.clip(
             clipping_boundary.buffer(max(island_values["fab"].rio.resolution())).geometry,
             all_touched=True)
@@ -311,6 +327,13 @@ def loop_through_islands_creating_dems(
 
         # Trim LiDAR DEM - if it exists
         if "lidar" in island_values.keys():
+            island_values["lidar"].to_netcdf(r"C:\Local\repos\pacific-dems\data\tonga\5m_dems\test_lidar.nc")
+            clipping_boundary.to_file(r"C:\Local\repos\pacific-dems\data\tonga\5m_dems\test_clipped_boundary.geojson")
+            clipping_boundary.buffer(max(island_values["fab"].rio.resolution())).to_file(r"C:\Local\repos\pacific-dems\data\tonga\5m_dems\test_clipped_boundary_fab.geojson")
+            clipping_boundary.buffer(resolution).to_file(r"C:\Local\repos\pacific-dems\data\tonga\5m_dems\test_clipped_boundary_lidar.geojson")
+            islands.to_file(r"C:\Local\repos\pacific-dems\data\tonga\5m_dems\test_islands.geojson")
+            print(island_values["lidar"])
+            print(clipping_boundary.buffer(resolution).geometry)
             trimmed_lidar = island_values["lidar"].rio.clip(
                 clipping_boundary.buffer(resolution).geometry,
                 drop=True, all_touched=True
@@ -328,12 +351,32 @@ def loop_through_islands_creating_dems(
             
         else:
             merged_dem_5m = fab_5m
+
         # Save files
         merged_dem_5m = merged_dem_5m.rio.clip(clipping_boundary.geometry,
                                                drop=True, all_touched=True
                                               )
-        merged_dem_5m.to_netcdf(output_path / f"{resolution}m_dem_{island_name}.nc")
-        merged_dem_5m.rio.to_raster(output_path / f"{resolution}m_dem_{island_name}.tif")
+        merged_dem_5m.to_dataset(name="dem").to_netcdf(output_path / f"{resolution}m_dem_{island_name}.nc",
+                                                       encoding={"dem":  {'zlib': True, 'complevel': 1, }})
+
+        merged_dem_5m.rio.to_raster(output_path / f"{resolution}m_dem_{island_name}.tif", compress='deflate')
+
+        
+        # Create and save data layer
+        data_source = xarray.zeros_like(merged_dem_5m, dtype=numpy.int32)
+        data_source.rio.set_nodata(-1, inplace=True)
+        data_source.rio.write_nodata(data_source.rio.nodata, inplace=True)
+        fab_5m = fab_5m.rio.clip(clipping_boundary.geometry, drop=True, all_touched=True)
+        data_source = data_source.where(fab_5m.isnull(), 2)
+        if "lidar" in island_values.keys():
+            lidar_5m = lidar_5m.rio.clip(clipping_boundary.geometry, drop=True, all_touched=True)
+            data_source = data_source.where(lidar_5m.isnull().data, 1)
+        data_source.rio.write_crs(data_source.rio.crs, inplace=True)
+        data_source = data_source.assign_attrs(title="The data source for each pixel", description="0 if no data, 1 if LiDAR, 2 if FABDEM")
+        for attribute in ["AREA_OR_POINT", "CHANGELOG", "INSTITUTE"]:
+            if attribute in data_source.attrs:
+                merged_dem_5m.attrs.pop(attribute)
+        data_source.rio.to_raster(output_path / f"{resolution}m_dem_data_source_{island_name}.tif", compress='deflate')
         
 def loop_through_islands_creating_dems_from_lidar_only(
     island_groups: dict, resolution: float, output_path: pathlib.Path
@@ -357,5 +400,6 @@ def loop_through_islands_creating_dems_from_lidar_only(
                     resolution=resolution,
                     boundary=boundary,
                 )
-        dem_5m.to_netcdf(output_path / f"{resolution}m_dem_{island_name}.nc")
-        dem_5m.rio.to_raster(output_path / f"{resolution}m_dem_{island_name}.tif")
+        dem_5m.to_dataset(name="dem").to_netcdf(output_path / f"{resolution}m_dem_{island_name}.nc",
+                                                encoding={"dem":  {'zlib': True, 'complevel': 1, }})
+        dem_5m.rio.to_raster(output_path / f"{resolution}m_dem_{island_name}.tif", compress='deflate') #'zlib', 'deflate', "lzw"
