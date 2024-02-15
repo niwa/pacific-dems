@@ -400,14 +400,6 @@ def loop_through_islands_creating_dems_from_lidar_only(
     for island_name, island_values in island_groups.items():
         print(f"Resampling DEM(s) for {island_name} to {resolution}m.")
 
-        '''bounds = island["lidar"].rio.bounds()
-        clipping_boundary = geopandas.GeoDataFrame(
-            geometry=[
-                shapely.geometry.Polygon([[bounds[0], bounds[1]], [bounds[2], bounds[1]],
-                                          [bounds[2], bounds[3]], [bounds[0], bounds[3]]])
-            ],
-            crs=island.rio.crs,
-        )'''
         islands = get_osm_islands_in_boundary(
             boundary_crs4326=island_values["boundary"], local_crs=island_values["crs"]
         )
@@ -435,7 +427,7 @@ def loop_through_islands_creating_dems_from_lidar_only(
         if interpolate:
             print(f"\tInterpolate DEMs.")
             lidar_5m = lidar_5m.rio.interpolate_na(method="linear")
-
-        dem_5m.to_dataset(name="dem").to_netcdf(output_path / f"{resolution}m_dem_{island_name}_lidar_only.nc",
-                                                encoding={"dem":  {'zlib': True, 'complevel': 1, }})
-        dem_5m.rio.to_raster(output_path / f"{resolution}m_dem_{island_name}_lidar_only.tif", compress='deflate') #'zlib', 'deflate', "lzw"
+        print(f"\tSaving DEMs.")
+        lidar_5m.to_dataset(name="dem").to_netcdf(output_path / f"{resolution}m_dem_{island_name}_lidar_only.nc",
+                                                  encoding={"dem":  {'zlib': True, 'complevel': 1, }})
+        lidar_5m.rio.to_raster(output_path / f"{resolution}m_dem_{island_name}_lidar_only.tif", compress='deflate') #'zlib', 'deflate', "lzw"
