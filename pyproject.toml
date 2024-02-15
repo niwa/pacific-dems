@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools_scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pacific-tems"
+description = "A package for creating clipped DEMs to island boundaries from LiDAR derived DEMs & FABDEM."
+authors = [
+    { name = "Rose PEARSON", email = "rose.pearson@niwa.co.nz" },
+	{ name = "NIWA Pacific DEMs", email = "pacific.dems@niwa.co.nz" }
+]
+dependencies = [
+	"pyyaml",
+	"defopt",
+	"geopandas",
+	"rioxarray",
+	"ipykernel",
+	"osmpythontools",
+	"netcdf4",
+]
+version = "1.0.0"
+
+[project.optional-dependencies]
+dev = [
+    "pdbpp",
+    "pyinstrument"
+]
+
+[tool.setuptools_scm]
+# needed even if empty to enable setuptools_scm

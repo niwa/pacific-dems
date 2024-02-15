@@ -12,5 +12,3 @@ dependencies:
   - pip:
     - osmpythontools >=0.3.5
     - netcdf4
-
-prefix: C:\ProgramData\Anaconda3\envs\partner_elevation
