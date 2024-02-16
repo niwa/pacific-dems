@@ -9,6 +9,7 @@ import numpy
 import xarray
 import rioxarray
 import rioxarray.merge
+import rasterio
 import geopandas
 import shapely
 import pathlib
@@ -103,6 +104,30 @@ def osm_query_islands(
         )
     return element_dict
 
+def get_gadm_islands_in_boundary(island_dict: dict, all_land_path: pathlib.Path, output_path: pathlib.Path):
+    """ All islands within the boundary - clip to boundary. """
+    
+    boundary_crs4326 = create_boundary_epsg4326(island_dict=island_dict, output_path=output_path)
+    island_dict["boundary"] = boundary_crs4326
+    local_crs = island_dict["crs"]
+    
+    land_boundary = geopandas.read_file(all_land_path).to_crs(local_crs)
+    land_boundary.clip(boundary_crs4326.to_crs(local_crs), keep_geom_type=True)
+    land_boundary = land_boundary.dissolve()
+    label = "gadm"
+    
+    if len(land_boundary) == 0:
+        land_boundary = get_osm_islands_in_boundary(
+            boundary_crs4326=boundary_crs4326, local_crs=local_crs
+        )
+        land_boundary = land_boundary.dissolve()
+        label = "osm"
+    
+    land_boundary.to_file(output_path / f"{label}_land_{island_dict['name']}.geojson")
+
+    return land_boundary
+    
+    
 
 def get_osm_islands_in_boundary(boundary_crs4326: geopandas, local_crs: str):
     """ All islands within the boundary - clip to boundary. Return islands defined by
@@ -259,17 +284,23 @@ def combine_fabs_in_boundary(
         for lon in lons:
             fab_folder_name = construct_fab_folder_name(lat=lat, lon=lon, fab_version=fab_version)
             fab_name = construct_fab_name(lat=lat, lon=lon, fab_version=fab_version)
-            if (fab_path / fab_version / fab_folder_name / fab_name).exists():
-                fabs.append(
-                    load_dem(fab_path / fab_version / fab_folder_name / fab_name)
-                )
+            if (fab_path / fab_version / fab_folder_name).exists():
+                if (fab_path / fab_version / fab_folder_name / fab_name).exists():
+                    fabs.append(
+                        load_dem(fab_path / fab_version / fab_folder_name / fab_name)
+                    )
+                else:
+                    print(f"/tWarning FABDEM tile {fab_name} doesn't exist in folder {fab_folder_name}")
             elif (fab_path / fab_version / f"{fab_folder_name}.zip").exists(): 
                 # Not yet unzipped
                 shutil.unpack_archive(str(fab_path / fab_version / f"{fab_folder_name}.zip"),
                                       str(fab_path / fab_version / fab_folder_name), 'zip')
-                fabs.append(
-                    load_dem(fab_path / fab_version / fab_folder_name / fab_name)
-                )
+                if (fab_path / fab_version / fab_folder_name / fab_name).exists():
+                    fabs.append(
+                        load_dem(fab_path / fab_version / fab_folder_name / fab_name)
+                    )
+                else:
+                    print(f"/tWarning FABDEM tile {fab_name} doesn't exist in folder {fab_folder_name}")
             else:
                 print(f"No {fab_folder_name}/{fab_name} FABDEM exists")
     fab = rioxarray.merge.merge_arrays(fabs)
@@ -300,134 +331,174 @@ def create_boundary_epsg4326(island_dict: dict, output_path: pathlib.Path):
     return boundary_crs4326
 
 
-def resample_lidar(lidar_dem: xarray.DataArray, clipping_boundary: geopandas.GeoDataFrame, resolution: float) -> xarray.DataArray:
-    trimmed_lidar = lidar_dem.rio.clip(
-        clipping_boundary.buffer(resolution).geometry,
-        drop=True, all_touched=True
-    )
+def resample_lidar(lidar_dem: xarray.DataArray, resolution: float, clipping_boundary: geopandas.GeoDataFrame) -> xarray.DataArray:
+    if clipping_boundary is not None:
+        lidar_dem = lidar_dem.rio.clip(
+            clipping_boundary.buffer(resolution).geometry,
+            drop=True, all_touched=False
+        )
+    else:
+        clipping_boundary = get_bbox_from_raster(lidar_dem)
     resampled_lidar = resample_dem(
-        dem_in=trimmed_lidar,
+        dem_in=lidar_dem,
         resolution=resolution,
         boundary=clipping_boundary.buffer(resolution),
     )
     return resampled_lidar
 
-def loop_through_islands_creating_dems(
-    island_groups: dict, resolution: float, output_path: pathlib.Path, buffer: bool = False
-):
-    """ Loop through each island group and merge then save each out. If buffer is set the DEMs
-    are created around the islands at a distance of 15 x resolution. """
-    for island_name, island_values in island_groups.items():
-        print(f"Combining DEMs for {island_name} to {resolution}m.")
-        islands = get_osm_islands_in_boundary(
-            boundary_crs4326=island_values["boundary"], local_crs=island_values["crs"]
-        )
-        islands.to_file(output_path / f"osm_islands_{island_name}.geojson")
-        islands = islands.dissolve()
-        # Add a buffer (i.e. 75m say) around each island before clipping
-        clipping_boundary = islands.buffer(resolution * 15) if buffer else islands
+def dem_data_extents(dem: xarray.DataArray):
+    resolution = max(dem.rio.resolution())
+    
+    extents = [shapely.geometry.shape(polygon[0]) for polygon in 
+               rasterio.features.shapes(numpy.uint8(dem.notnull().values)) if polygon[1] == 1.0 ]
+    extents = shapely.ops.unary_union(extents)
 
-        # Trim FAB then resample
-        trimmed_fab = island_values["fab"].rio.clip(
-            clipping_boundary.buffer(max(island_values["fab"].rio.resolution())).geometry,
-            all_touched=True)
-        fab_5m = resample_dem(
-            dem_in=trimmed_fab,
-            resolution=resolution,
-            boundary=clipping_boundary,
-        )
+    # Remove internal holes for select types as these may cause self-intersections
+    if type(extents) is shapely.geometry.Polygon:
+        extents = shapely.geometry.Polygon(extents.exterior)
+    elif type(extents) is shapely.geometry.MultiPolygon:
+        extents = shapely.geometry.MultiPolygon( [shapely.geometry.Polygon(polygon.exterior) for polygon in extents.geoms ] )
+    # Convert into a Geopandas dataframe
+    extents = geopandas.GeoDataFrame( {"geometry": [extents]}, crs=dem.rio.crs, )
 
-        # Trim LiDAR DEM - if it exists
-        if "lidar" in island_values.keys():
-            if type(island_values["lidar"]) is not list:
-                island_values["lidar"] = [island_values["lidar"]]
-            lidar_list_5m = []
-            for lidar_dem in island_values["lidar"]:
-                lidar_5m = resample_lidar(lidar_dem=lidar_dem,
-                                          clipping_boundary=clipping_boundary,
-                                          resolution=resolution)
-                lidar_list_5m.append(lidar_5m)
-            if len(lidar_list_5m) == 1:
-                lidar_5m = lidar_list_5m[0]
-            else:
-                lidar_5m = rioxarray.merge.merge_arrays(lidar_list_5m, method="first")
+    # Move from image to the dem space & buffer(0) to reduce self-intersections
+    transform = dem.rio.transform()
+    extents = extents.affine_transform(
+        [ transform.a, transform.b, transform.d, transform.e, transform.xoff, transform.yoff, ]
+    ).buffer(0)
 
-            # Combine
-            merged_dem_5m = rioxarray.merge.merge_arrays(
-                [lidar_5m, fab_5m], method="first",
-            )
-            
-        else:
-            merged_dem_5m = fab_5m
+    # And make our GeoSeries into a GeoDataFrame
+    extents = geopandas.GeoDataFrame(geometry=extents)
+    
+    # Buffer by 2x resolution and dissolve
+    extents = geopandas.GeoDataFrame(geometry=extents.buffer(resolution)).dissolve().buffer(-resolution)
+    return extents
 
-        # Save files
-        merged_dem_5m = merged_dem_5m.rio.clip(clipping_boundary.geometry,
-                                               drop=True, all_touched=True
-                                              )
-        merged_dem_5m.to_dataset(name="dem").to_netcdf(output_path / f"{resolution}m_dem_{island_name}.nc",
-                                                       encoding={"dem":  {'zlib': True, 'complevel': 1, }})
-
-        merged_dem_5m.rio.to_raster(output_path / f"{resolution}m_dem_{island_name}.tif", compress='deflate')
-
-        
-        # Create, combine and save data layer
-        data_source_fab = xarray.zeros_like(fab_5m, dtype=numpy.int32)
+def create_datasource_layer(fab_dem: xarray.DataArray, lidar_dem: xarray.DataArray,
+                            clipping_boundary: geopandas.GeoDataFrame = None):
+    # Create, combine and save data layer
+    dems = []
+    if lidar_dem is not None:
+        data_source_lidar = xarray.zeros_like(lidar_dem, dtype=numpy.int32)
+        data_source_lidar.rio.set_nodata(0, inplace=True)
+        data_source_lidar.rio.write_nodata(data_source_lidar.rio.nodata, inplace=True)
+        data_source_lidar = data_source_lidar.where(lidar_dem.isnull().data, 1)
+        dems.append(data_source_lidar)
+    if fab_dem is not None:
+        data_source_fab = xarray.zeros_like(fab_dem, dtype=numpy.int32)
         data_source_fab.rio.set_nodata(0, inplace=True)
         data_source_fab.rio.write_nodata(data_source_fab.rio.nodata, inplace=True)
-        data_source_fab = data_source_fab.where(fab_5m.isnull(), 2)
-        if "lidar" in island_values.keys():
-            data_source_lidar = xarray.zeros_like(lidar_5m, dtype=numpy.int32)
-            data_source_lidar.rio.set_nodata(0, inplace=True)
-            data_source_lidar.rio.write_nodata(data_source_lidar.rio.nodata, inplace=True)
-            data_source_lidar = data_source_lidar.where(lidar_5m.isnull().data, 1)
-            data_source = rioxarray.merge.merge_arrays([data_source_lidar, data_source_fab], method="first",)
-        else:
-            data_source = data_source_fab
+        data_source_fab = data_source_fab.where(fab_dem.isnull(), 2)
+        dems.append(data_source_fab)
+    if len(dems) > 1:
+        data_source = rioxarray.merge.merge_arrays(dems, method="first",)
+    else:
+        data_source = dems[0]
+    if clipping_boundary is not None:
         data_source = data_source.rio.clip(clipping_boundary.geometry, drop=True, all_touched=True)
-        data_source.rio.write_crs(data_source.rio.crs, inplace=True)
-        data_source = data_source.assign_attrs(title="The data source for each pixel", description="0 if no data, 1 if LiDAR, 2 if FABDEM")
-        for attribute in ["AREA_OR_POINT", "CHANGELOG", "INSTITUTE"]:
-            if attribute in data_source.attrs:
-                data_source.attrs.pop(attribute)
-        data_source.rio.to_raster(output_path / f"{resolution}m_dem_data_source_{island_name}.tif", compress='deflate')
-        
-def loop_through_islands_creating_dems_from_lidar_only(
-    island_groups: dict, resolution: float, output_path: pathlib.Path, interpolate: str, buffer: bool = False
+    data_source.rio.write_crs(data_source.rio.crs, inplace=True)
+    data_source = data_source.assign_attrs(title="The data source for each pixel", description="0 if no data, 1 if LiDAR, 2 if FABDEM")
+    for attribute in ["AREA_OR_POINT", "CHANGELOG", "INSTITUTE"]:
+        if attribute in data_source.attrs:
+            data_source.attrs.pop(attribute)
+    return data_source
+
+def get_bbox_from_geometry(extents: geopandas.GeoDataFrame):
+    bounds = extents.bounds
+    bbox = geopandas.GeoDataFrame(geometry=[shapely.geometry.Polygon([[bounds.minx, bounds.miny], [bounds.minx, bounds.maxy],
+                                                           [bounds.maxx, bounds.maxy], [bounds.maxx, bounds.miny]])],
+                                 crs=extents.crs)
+    return bbox
+
+def get_bbox_from_raster(raster: xarray.DataArray):
+    bounds = raster.rio.bounds()
+    bbox = geopandas.GeoDataFrame(
+        geometry=[shapely.geometry.Polygon([[bounds[0], bounds[1]], [bounds[2], bounds[1]],
+                                            [bounds[2], bounds[3]], [bounds[0], bounds[3]]])],
+        crs=raster.rio.crs,
+    )
+
+    return bbox
+
+def creating_dems_all_islands(
+    island_groups: dict, resolution: float, output_path: pathlib.Path
 ):
     """ Loop through each island group and save out the LiDAR DEM resampled to a coarser resolution.
     No triming is applied to the LiDAR. """
     
     for island_name, island_values in island_groups.items():
-        print(f"Resampling DEM(s) for {island_name} to {resolution}m.")
+        print(f"Producing DEM(s) for {island_name} at {resolution}m.")
+        label = ""
+        land = island_values["land"]
+        
+        if "lidar" in island_values:
+            # Combine all LiDAR DEMs
+            if type(island_values["lidar"]) is not list:
+                island_values["lidar"] = [island_values["lidar"]]
+                
+            lidar_list_5m = []
+            for index, lidar_dem in enumerate(island_values["lidar"]):    
+                print(f"\tReample LiDAR DEM {index + 1} of {len(island_values['lidar'])}")
+                lidar_5m = resample_lidar(lidar_dem=lidar_dem,
+                                          clipping_boundary=None,
+                                          resolution=resolution)
+                lidar_list_5m.append(lidar_5m)
+            if len(lidar_list_5m) == 1:
+                lidar_5m = lidar_list_5m[0]
+            else:
+                print(f"\tCombining {len(lidar_list_5m)} DEMs.")
+                lidar_5m = rioxarray.merge.merge_arrays(lidar_list_5m, method="first")
 
-        islands = get_osm_islands_in_boundary(
-            boundary_crs4326=island_values["boundary"], local_crs=island_values["crs"]
-        )
-        islands.to_file(output_path / f"osm_islands_{island_name}.geojson")
-        islands = islands.dissolve()
-        # Add a buffer (i.e. 75m say) around each island before clipping
-        clipping_boundary = islands.buffer(resolution * 15) if buffer else islands
-        
-        # Combine all DEMs
-        if type(island_values["lidar"]) is not list:
-            island_values["lidar"] = [island_values["lidar"]]
+                print("\tDefine extents of LiDAR DEMs.")
+                lidar_extents = dem_data_extents(lidar_5m)
+                lidar_extents.to_file(output_path / f"{resolution}m_dem_{island_name}_lidar_only.geojson")
+
+                print(f"\tInterpolate small gaps in the LiDAR DEMs.")
+                lidar_5m = lidar_5m.rio.interpolate_na(method="nearest")
+                lidar_5m = lidar_5m.rio.clip(lidar_extents.geometry, drop=True, all_touched=False)
         else:
-            print(f"\tCombining {len(island_values['lidar'])} DEMs.")
-        lidar_list_5m = []
-        for lidar_dem in island_values["lidar"]:
-            lidar_5m = resample_lidar(lidar_dem=lidar_dem,
-                                      clipping_boundary=clipping_boundary,
-                                      resolution=resolution)
-            lidar_list_5m.append(lidar_5m)
-        if len(lidar_list_5m) == 1:
-            lidar_5m = lidar_list_5m[0]
+            lidar_5m = None
+            
+        # If not only LiDAR bring in FABDEM
+        if "lidar_only" in island_values:
+            fab_5m = None
+            label += "_lidar_only"
         else:
-            lidar_5m = rioxarray.merge.merge_arrays(lidar_list_5m, method="first")
+            # Trim FAB then resample
+            trimmed_fab = island_values["fab"].rio.clip(
+                land.buffer(max(island_values["fab"].rio.resolution())).geometry,
+                all_touched=True)
+            fab_5m = resample_dem(
+                dem_in=trimmed_fab,
+                resolution=resolution,
+                boundary=land,
+            )
+        if lidar_5m is not None and fab_5m is not None:
+            print("\tMergining FAB and LiDAR DEMs.")
+            label = "_including_lidar"
+            merged_dem_5m = rioxarray.merge.merge_arrays([lidar_5m, fab_5m], method="first",)
+        elif lidar_5m is not None:
+            merged_dem_5m = lidar_5m
+        elif fab_5m is not None:
+            merged_dem_5m = fab_5m
+        else:
+            print("\tNo DEMs. Exiting.")
+            return
         
-        if interpolate:
-            print(f"\tInterpolate DEMs.")
-            lidar_5m = lidar_5m.rio.interpolate_na(method="linear")
-        print(f"\tSaving DEMs.")
-        lidar_5m.to_dataset(name="dem").to_netcdf(output_path / f"{resolution}m_dem_{island_name}_lidar_only.nc",
-                                                  encoding={"dem":  {'zlib': True, 'complevel': 1, }})
-        lidar_5m.rio.to_raster(output_path / f"{resolution}m_dem_{island_name}_lidar_only.tif", compress='deflate') #'zlib', 'deflate', "lzw"
+        print("\tSaving DEMs.")
+        merged_dem_5m.to_dataset(name="dem").to_netcdf(output_path / f"{resolution}m_dem_{island_name}{label}.nc",
+                                                       encoding={"dem":  {'zlib': True, 'complevel': 1, }})
+        merged_dem_5m.rio.to_raster(output_path / f"{resolution}m_dem_{island_name}{label}.tif", compress='deflate') #'zlib', 'deflate', "lzw"
+        
+        # Create, combine and save data layer
+        data_source = create_datasource_layer(fab_dem=fab_5m, lidar_dem=lidar_5m, clipping_boundary=None)
+        data_source.rio.to_raster(output_path / f"{resolution}m_dem_data_source_{island_name}{label}.tif", compress='deflate')
+        
+        if lidar_5m is not None:
+            print("\tClip then save DEMs to land.")
+            merged_dem_5m = merged_dem_5m.rio.clip(land.geometry, all_touched=False)
+            merged_dem_5m.to_dataset(name="dem").to_netcdf(output_path / f"{resolution}m_dem_{island_name}{label}_land.nc",
+                                                           encoding={"dem":  {'zlib': True, 'complevel': 1, }})
+            merged_dem_5m.rio.to_raster(output_path / f"{resolution}m_dem_{island_name}{label}_land.tif", compress='deflate') #'zlib', 'deflate', "lzw"
+            data_source = create_datasource_layer(fab_dem=fab_5m, lidar_dem=lidar_5m, clipping_boundary=land)
+            data_source.rio.to_raster(output_path / f"{resolution}m_dem_data_source_{island_name}{label}_land.tif", compress='deflate')

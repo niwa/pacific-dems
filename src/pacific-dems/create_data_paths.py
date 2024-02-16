@@ -17,7 +17,8 @@ def get_paths(country_name: str, resolution: int) -> dict:
     output_path = country_path / f"{resolution}m_dems"
     output_path.mkdir(parents=True, exist_ok=True)
     lidar_path = country_path / "lidar"
+    land_path = data_path = data_path / "padm.gpkg"
     
-    paths = {"fabdem": fabdem_path, "country": country_path, "output": output_path, "lidar": lidar_path}
+    paths = {"fabdem": fabdem_path, "country": country_path, "output": output_path, "lidar": lidar_path, "land": land_path}
     
     return paths
