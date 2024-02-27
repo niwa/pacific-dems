@@ -23,7 +23,6 @@ FABDEM_NODATA = 0
 def load_dem(dem_path: pathlib):
     """ Load in a DEM - ensure values are float32. """
     dem = rioxarray.open_rasterio(dem_path, masked=True, chunks=True).squeeze("band", drop=True)
-    breakpoint()
     dem.rio.write_nodata(dem.rio.nodata, inplace=True)
     dem.rio.write_crs(dem.rio.crs, inplace=True)
     dem['x'] = dem.x.astype(numpy.float32)
@@ -39,7 +38,7 @@ def save_dem(dem: xarray.DataArray, dem_path: pathlib, dem_name: str):
     
     dem.to_dataset(name="dem").to_netcdf(dem_path / f"{dem_name}.nc", 
                                          encoding={"dem":  {"zlib": True, "complevel": 1, 
-                                                            "grid_mapping": grid_mapping, "dtype": numpy.float32}})
+                                                            "grid_mapping": dem.encoding["grid_mapping"], "dtype": numpy.float32}})
     dem.rio.to_raster(dem_path / f"{dem_name}.tif", compress='deflate') # compress='zlib', 'deflate', "lzw"
 
 def resample_dem(dem_in: rioxarray, resolution: float, boundary: geopandas):
