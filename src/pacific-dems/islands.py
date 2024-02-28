@@ -292,11 +292,11 @@ def vanuatu() -> dict:
                         "lats": [-18.61, -18.61, -20.28, -20.28],
                         "lons": [168.96, 170.25, 170.25, 168.96]}
 
-    vanuatu["torba_province "] = {"crs": crs_zone58S,
+    vanuatu["torba_province"] = {"crs": crs_zone58S,
                         "lats": [-13.05, -13.05, -14.51, -14.51],
                         "lons": [166.50, 168.09, 168.09, 166.50]}
 
-    vanuatu["shefa_province "] = {"crs": crs_zone59S,
+    vanuatu["shefa_province"] = {"crs": crs_zone59S,
                         "lats": [-16.55, -16.55, -17.84, -17.84],
                         "lons": [168.10, 168.68, 168.68, 168.10]}
 
