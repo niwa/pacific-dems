@@ -3,7 +3,7 @@ requires = ["setuptools>=64", "setuptools_scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pacific-tems"
+name = "pacific_dems"
 description = "A package for creating clipped DEMs to island boundaries from LiDAR derived DEMs & FABDEM."
 authors = [
     { name = "Rose PEARSON", email = "rose.pearson@niwa.co.nz" },

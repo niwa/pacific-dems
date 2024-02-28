@@ -39,6 +39,7 @@ def save_dem(dem: xarray.DataArray, dem_path: pathlib, dem_name: str):
     dem.to_dataset(name="dem").to_netcdf(dem_path / f"{dem_name}.nc", 
                                          encoding={"dem":  {"zlib": True, "complevel": 1, 
                                                             "grid_mapping": dem.encoding["grid_mapping"], "dtype": numpy.float32}})
+    dem.encoding = {'dtype': dem.encoding['dtype'], 'grid_mapping': dem.encoding['grid_mapping'], 'rasterio_dtype': dem.encoding['rasterio_dtype']}
     dem.rio.to_raster(dem_path / f"{dem_name}.tif", compress='deflate') # compress='zlib', 'deflate', "lzw"
 
 def resample_dem(dem_in: rioxarray, resolution: float, boundary: geopandas):
