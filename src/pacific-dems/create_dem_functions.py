@@ -39,7 +39,7 @@ def save_dem(dem: xarray.DataArray, dem_path: pathlib, dem_name: str):
     dem.to_dataset(name="dem").to_netcdf(dem_path / f"{dem_name}.nc", 
                                          encoding={"dem":  {"zlib": True, "complevel": 1, 
                                                             "grid_mapping": dem.encoding["grid_mapping"], "dtype": numpy.float32}})
-    dem.encoding = {'dtype': dem.encoding['dtype'], 'grid_mapping': dem.encoding['grid_mapping'], 'rasterio_dtype': dem.encoding['rasterio_dtype']}
+    dem.encoding = {'dtype': numpy.float32, 'grid_mapping': dem.encoding['grid_mapping'], 'rasterio_dtype': numpy.float32}
     dem.rio.to_raster(dem_path / f"{dem_name}.tif", compress='deflate') # compress='zlib', 'deflate', "lzw"
 
 def resample_dem(dem_in: rioxarray, resolution: float, boundary: geopandas):
@@ -471,7 +471,7 @@ def creating_dems_all_islands(
             if "interpolate" in island_values:
                 print(f"\tInterpolate small gaps in the LiDAR DEMs.")
                 lidar_5m = lidar_5m.rio.interpolate_na(method="nearest")
-                lidar_5m = lidar_5m.rio.clip(lidar_extents.geometry, drop=True, all_touched=False)
+                lidar_5m = lidar_5m.rio.clip(lidar_extents.geometry, drop=True, all_touched=True)
         else:
             lidar_5m = None
             
@@ -489,6 +489,7 @@ def creating_dems_all_islands(
                 resolution=resolution,
                 boundary=land,
             )
+            fab_5m = fab_5m.rio.clip(land.geometry, all_touched=True)
         if lidar_5m is not None and fab_5m is not None:
             print("\tMergining FAB and LiDAR DEMs.")
             label = "_including_lidar"
@@ -512,7 +513,7 @@ def creating_dems_all_islands(
         
         if lidar_5m is not None:
             print("\tClip then save DEMs to land.")
-            merged_dem_5m = merged_dem_5m.rio.clip(land.geometry, all_touched=False)
+            merged_dem_5m = merged_dem_5m.rio.clip(land.geometry, all_touched=True)
             save_dem(dem=merged_dem_5m, dem_path=island_output_path,
                      dem_name=f"{resolution}m_dem_{island_name}{label}_land")
 
