@@ -464,9 +464,9 @@ def creating_dems_all_islands(
                 print(f"\tCombining {len(lidar_list_5m)} DEMs.")
                 lidar_5m = rioxarray.merge.merge_arrays(lidar_list_5m, method="first")
 
-                print("\tDefine extents of LiDAR DEMs.")
-                lidar_extents = dem_data_extents(lidar_5m)
-                lidar_extents.to_file(island_output_path / f"{resolution}m_dem_{island_name}_lidar_only.geojson")
+            print("\tDefine extents of LiDAR DEMs.")
+            lidar_extents = dem_data_extents(lidar_5m)
+            lidar_extents.to_file(island_output_path / f"{resolution}m_dem_{island_name}_lidar_only.geojson")
 
             if "interpolate" in island_values:
                 print(f"\tInterpolate small gaps in the LiDAR DEMs.")
