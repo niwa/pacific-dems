@@ -445,6 +445,7 @@ def creating_dems_all_islands(
         label = ""
         land = island_values["land"]
         island_output_path = output_path / island_name
+        island_output_path.mkdir(parents=True, exist_ok=True)
         
         if "lidar" in island_values:
             # Combine all LiDAR DEMs
