@@ -453,12 +453,6 @@ def creating_dems_all_islands(
         land = island_values["land"]
         island_output_path = output_path / island_name
         island_output_path.mkdir(parents=True, exist_ok=True)
-
-        # Skip if already created
-        if numpy.any([(island_output_path / f"{resolution}m_dem_{island_name}{label}_land.tif").exists() for label in ["", "_lidar_only", "_including_lidar"]]):
-            print(f"\tSkipping {island_name} as already saved")
-            continue
-
         
         if "lidar" in island_values:
             # Combine all LiDAR DEMs
