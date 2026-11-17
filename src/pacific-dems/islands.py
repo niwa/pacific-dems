@@ -71,9 +71,13 @@ def cook_islands() :
                         "lats": [-19.79, -19.79, -19.85, -19.85],
                         "lons": [-158.32, -158.26, -158.26, -158.32]}
 
-    cook_islands["aitutaki_manuae_islands"] = {"crs": crs_zone4S,
-                        "lats": [-18.81, -18.81, -19.30, -19.30],
-                        "lons": [-159.86, -158.90, -158.90, -159.86]}
+    cook_islands["aitutaki_islands"] = {"crs": crs_zone4S,
+                        "lats": [-18.81, -18.81, -18.98, -18.98],
+                        "lons": [-159.86, -159.72, -159.72, -159.86]}
+
+    cook_islands["manuae_islands"] = {"crs": crs_zone4S,
+                        "lats": [-19.24, -19.24, -19.30, -19.30],
+                        "lons": [-158.98, -158.90, -158.90, -158.98]}
 
     cook_islands["palmerston"] = {"crs": crs_zone3S,
                         "lats": [-17.98, -17.98, -18.11, -18.11],
