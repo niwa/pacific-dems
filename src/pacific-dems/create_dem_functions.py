@@ -46,26 +46,16 @@ def resample_dem(dem_in: rioxarray, resolution: float, boundary: geopandas):
     """ A function to downscale a LiDAR DEM and combine with a FABDEM where there is no
     data to cover an island. """
 
-    bounds = boundary.buffer(resolution).bounds
-    if numpy.sign(float(dem_in.y[1] - dem_in.y[0])) > 0:
-        new_y = numpy.arange(bounds.miny[0], bounds.maxy[0], resolution)
-    else:
-        new_y = numpy.arange(bounds.maxy[0], bounds.miny[0], -resolution)
-    if numpy.sign(float(dem_in.x[1] - dem_in.x[0])) > 0:
-        new_x = numpy.arange(bounds.minx[0], bounds.maxx[0], resolution)
-    else:
-        new_x = numpy.arange(bounds.maxx[0], bounds.minx[0], -resolution)
-    new_y = new_y[new_y > min(float(dem_in.y[0]), float(dem_in.y[-1]))]
-    new_y = new_y[new_y < max(float(dem_in.y[0]), float(dem_in.y[-1]))]
-    new_x = new_x[new_x > min(float(dem_in.x[0]), float(dem_in.x[-1]))]
-    new_x = new_x[new_x < max(float(dem_in.x[0]), float(dem_in.x[-1]))]
-
-    dem_out = dem_in.interp(x=new_x, y=new_y, method="linear").rio.write_crs(
-        dem_in.rio.crs
+    # Previously used dem_in.interp(...)
+    dem_out = dem_in.rio.reproject(
+        dem_in.rio.crs,
+        resolution=resolution,
+        resampling=rasterio.enums.Resampling.average,
     )
+    dem_out = dem_out.rio.write_crs(dem_in.rio.crs)
     dem_out.rio.write_transform(dem_out.rio.transform(recalc=True), inplace=True)
     dem_out.rio.write_nodata(dem_in.rio.nodata, inplace=True)
-    dem_out.rio.clip(boundary.geometry, all_touched=True, drop=False)
+    dem_out = dem_out.rio.clip(boundary.buffer(resolution).geometry, all_touched=True, drop=False)
 
     return dem_out
 
@@ -120,17 +110,28 @@ def get_islands_in_boundary(island_dict: dict, gadm_path: pathlib.Path, output_p
     """ All islands within the boundary - clip to boundary. Could be OSM or GADM """
     
     output_path.mkdir(parents=True, exist_ok=True)
-    
+
+    # Check is OSM or GADM defined boundary
     boundary_crs4326 = create_boundary_epsg4326(island_dict=island_dict, output_path=output_path)
     island_dict["boundary"] = boundary_crs4326
     local_crs = island_dict["crs"]
     
     land_boundary = geopandas.read_file(gadm_path).to_crs(local_crs)
-    land_boundary.clip(boundary_crs4326.to_crs(local_crs), keep_geom_type=True)
+    land_boundary = land_boundary.clip(boundary_crs4326.to_crs(local_crs), keep_geom_type=True)
     land_boundary = land_boundary.dissolve()
     label = "gadm"
     
     if len(land_boundary) == 0 or ("use_osm" in island_dict and island_dict["use_osm"]):
+        label = "osm"
+
+    file_name = output_path / f"{label}_land_{island_dict['name']}.geojson"
+
+    # Check if already exists and then return
+    if file_name.exists():
+        return geopandas.read_file(file_name)
+
+    # Otherwise save - generating if OSM
+    if label == "osm":
         land_boundary = get_osm_islands_in_boundary(
             boundary_crs4326=boundary_crs4326, local_crs=local_crs
         )
@@ -323,7 +324,13 @@ def combine_fabs_in_boundary(
         .rio.reproject(island_dict["crs"])
         .rio.write_crs(island_dict["crs"])
     )
-    fab.rio.write_nodata(fab.rio.nodata).to_netcdf(
+    fab.rio.write_nodata(fab.rio.nodata, inplace=True)
+
+    # Remove _FillValue from attributes - xarray handles it in encoding
+    if '_FillValue' in fab.attrs:
+        del fab.attrs['_FillValue']
+
+    fab.to_netcdf(
         fab_path
         / f"{island_dict['name']}_FABDEM_crs{island_dict['crs']}.nc"
     )
